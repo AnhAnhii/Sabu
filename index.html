@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Particle Heart — GIF style</title>
+<title>Particle Heart — fixed heart with wind jitter</title>
 <style>
   html,body{margin:0;height:100%;background:#000;overflow:hidden}
   canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
@@ -14,7 +14,7 @@
 
 <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
 <script>
-/* ========= Basic setup ========= */
+/* ========= Setup ========= */
 const rnd=(a,b)=>a+Math.random()*(b-a);
 const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});
 renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));
@@ -31,7 +31,7 @@ addEventListener('resize',()=>{
   camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
 });
 
-/* ========= Circle sprite (soft) ========= */
+/* ========= Soft circle sprite ========= */
 function makeCircle(size=64){
   const c=document.createElement('canvas'); c.width=c.height=size;
   const g=c.getContext('2d'), r=size/2;
@@ -46,63 +46,77 @@ const SPRITE = makeCircle();
 function heartXY(t){return [16*Math.sin(t)**3, 13*Math.cos(t)-5*Math.cos(2*t)-2*Math.cos(3*t)-Math.cos(4*t)];}
 function insideHeart(x,y){const xx=x*x,yy=y*y;return Math.pow(xx+yy-1,3)-xx*yy*y<=0;}
 
-const HEART_SCALE=2.8, HEART_Y=38, HEART_POINTS=2800, EDGE_PERCENT=65;
+const HEART_SCALE=2.9, HEART_Y=38, HEART_POINTS=3000, EDGE_PERCENT=70;
 function buildHeartTargets(){
   const pts=[]; const nEdge=Math.floor(HEART_POINTS*EDGE_PERCENT/100), nFill=HEART_POINTS-nEdge;
   for(let i=0;i<nEdge;i++){
     const t=-Math.PI+(i/nEdge)*Math.PI*2; const [hx,hy]=heartXY(t);
-    pts.push(new THREE.Vector3(hx*HEART_SCALE+rnd(-.25,.25), hy*HEART_SCALE+HEART_Y+rnd(-.25,.25), rnd(-3,3)));
+    pts.push(new THREE.Vector3(hx*HEART_SCALE+rnd(-.2,.2), hy*HEART_SCALE+HEART_Y+rnd(-.2,.2), rnd(-2.5,2.5)));
   }
   for(let i=0;i<nFill;i++){
     const t=rnd(-Math.PI,Math.PI), s=Math.pow(Math.random(),0.35); const [hx,hy]=heartXY(t);
-    pts.push(new THREE.Vector3(hx*s*HEART_SCALE+rnd(-.4,.4), hy*s*HEART_SCALE+HEART_Y+rnd(-.4,.4), rnd(-4,4)));
+    pts.push(new THREE.Vector3(hx*s*HEART_SCALE+rnd(-.35,.35), hy*s*HEART_SCALE+HEART_Y+rnd(-.35,.35), rnd(-3,3)));
   }
   return pts;
 }
 const heartTargets=buildHeartTargets();
 
 /* ========= Particles ========= */
-const TOTAL=4200; // tổng hạt (đủ mịn)
+/* Ý tưởng:
+   - Trước: tất cả là “float” rồi mới bay lên tạo tim.
+   - Nay: tạo sẵn một “lớp tim” (BOUND) chiếm HEART_POINTS hạt.
+   - Còn lại là “float” bên dưới để tạo hiệu ứng dòng xoáy.
+*/
+const FLOAT_COUNT = 2200;              // hạt dưới đáy
+const TOTAL = HEART_POINTS + FLOAT_COUNT;
+
 const positions=new Float32Array(TOTAL*3);
 const colors   =new Float32Array(TOTAL*3);
 
-const state=new Array(TOTAL);           // 'float' | 'rise' | 'bound'
-const vel=new Array(TOTAL);             // Vector3
+const state=new Array(TOTAL);           // 'float' | 'bound'
+const vel  =new Array(TOTAL);           // Vector3
 const target=new Array(TOTAL);          // index của heartTargets
-const boundAge=new Float32Array(TOTAL); // đã giữ bao lâu
-const boundHold=new Float32Array(TOTAL);// phải giữ tối thiểu
+const jitterSeed=new Float32Array(TOTAL); // hạt rung theo seed riêng
 
-const blue=new THREE.Color('#8fd9ff');  // lam nhạt (như gif)
-const pink=new THREE.Color('#ff5aa0');  // hồng tim trên
+const blue=new THREE.Color('#8fd9ff');    // lam nhạt (dưới)
+const pink=new THREE.Color('#ff5aa0');    // hồng (tim)
 
-// khu vực phun hạt dưới
+// vùng phát hạt dưới
 const bottomY=-40, floorY=-55, radiusX=95, radiusZ=85;
-const vortexY=-10, gravity=-25, swirlBase=1.6, updraft=30;
+// gió xoáy chung
+const vortexY=-10, gravity=-25, swirlBase=1.55, updraft=28;
 
-for(let i=0;i<TOTAL;i++){
+/* --- Lớp trái tim cố định sẵn --- */
+for(let i=0;i<HEART_POINTS;i++){
+  const t = heartTargets[i];
+  positions[i*3]=t.x + rnd(-0.3,0.3);
+  positions[i*3+1]=t.y + rnd(-0.3,0.3);
+  positions[i*3+2]=t.z + rnd(-0.3,0.3);
+  colors[i*3]=pink.r; colors[i*3+1]=pink.g; colors[i*3+2]=pink.b;
+  state[i]='bound'; target[i]=i; vel[i]=new THREE.Vector3(); jitterSeed[i]=Math.random()*1000;
+}
+
+/* --- Hạt dưới đáy (float) --- */
+for(let i=HEART_POINTS;i<TOTAL;i++){
   const x=rnd(-radiusX,radiusX), y=rnd(floorY,bottomY), z=rnd(-radiusZ,radiusZ);
   positions[i*3]=x; positions[i*3+1]=y; positions[i*3+2]=z;
-  const c=blue; colors[i*3]=c.r; colors[i*3+1]=c.g; colors[i*3+2]=c.b;
-  state[i]='float'; vel[i]=new THREE.Vector3(rnd(-5,5),rnd(5,15),rnd(-5,5));
-  target[i]=-1; boundAge[i]=0; boundHold[i]=0;
+  colors[i*3]=blue.r; colors[i*3+1]=blue.g; colors[i*3+2]=blue.b;
+  state[i]='float'; target[i]=-1; vel[i]=new THREE.Vector3(rnd(-5,5),rnd(5,15),rnd(-5,5));
+  jitterSeed[i]=Math.random()*1000;
 }
 
 const geo=new THREE.BufferGeometry();
 geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
 geo.setAttribute('color',    new THREE.BufferAttribute(colors,3));
 
-/* -- two layers: core + halo (fake glow nhẹ, không chói) -- */
-function makeLayer(size,opacity){
-  return new THREE.Points(geo, new THREE.PointsMaterial({
-    size, sizeAttenuation:true, map:SPRITE, alphaTest:.1, transparent:true, opacity,
-    vertexColors:true, blending:THREE.AdditiveBlending, depthWrite:false
-  }));
-}
-const layerCore = makeLayer(8,1.0);     // chấm chính
-const layerHalo = makeLayer(14,0.25);   // quầng mờ nhẹ
-scene.add(layerHalo); scene.add(layerCore);
+const points = new THREE.Points(geo, new THREE.PointsMaterial({
+  size:8, sizeAttenuation:true, map:SPRITE, alphaTest:.1,
+  transparent:true, opacity:1, vertexColors:true,
+  blending:THREE.AdditiveBlending, depthWrite:false
+}));
+scene.add(points);
 
-/* ========= Vortex field ========= */
+/* ========= Trường xoáy + gió ========= */
 function vortexField(x,y,z,strength=1){
   const dx=x, dy=y-vortexY, dz=z;
   const r=Math.max(5, Math.hypot(dx,dz));
@@ -112,86 +126,71 @@ function vortexField(x,y,z,strength=1){
   const pull=-0.55*strength*fall;
   const lift=updraft*strength*(0.6+0.4*Math.exp(-(dy*dy)/400));
   return {
-    vx: tx*swirl + (dx/r)*pull + (Math.random()-0.5)*0.08,
-    vy: 0.33*swirl + lift*0.02 + (Math.random()-0.5)*0.05,
-    vz: tz*swirl + (dz/r)*pull + (Math.random()-0.5)*0.08
+    vx: tx*swirl + (dx/r)*pull,
+    vy: 0.32*swirl + lift*0.02,
+    vz: tz*swirl + (dz/r)*pull
   };
 }
 
-/* ========= Animate ========= */
+/* ========= Loop ========= */
 let last=performance.now(), phase=0;
 function animate(now){
   requestAnimationFrame(animate);
   const dt=Math.min(0.04,(now-last)/1000); last=now;
+  const tSec = now*0.001;
 
-  // camera sway nhẹ
+  // camera sway
   camera.position.x=Math.sin(now*0.00025)*28;
   camera.position.z=160+Math.cos(now*0.00025)*14;
   camera.lookAt(0,HEART_Y,0);
 
-  // nhịp xoáy lên theo chu kỳ
-  const period=7.2; phase=(phase+dt/period)%1;
+  // nhịp gió: khi cao, tim rung nhiều hơn
+  const period=7.0; phase=(phase+dt/period)%1;
   const pulse=0.85+0.45*Math.sin(phase*6.283); // 0.4..1.3
-  const strength=pulse; // không slider
+  const strength=pulse;
+  const wind = Math.max(0, (pulse-0.95)/0.35); // 0..~1 khi “xoáy mạnh”
 
   for(let i=0;i<TOTAL;i++){
     let x=positions[i*3], y=positions[i*3+1], z=positions[i*3+2];
 
-    if(state[i]==='float'){                  // dưới đáy
-      const f=vortexField(x,y,z,strength*0.6);
-      vel[i].x+=f.vx; vel[i].y+=gravity*0.02+f.vy; vel[i].z+=f.vz;
+    if(state[i]==='float'){
+      // hạt dưới chịu trọng lực + xoáy
+      const f=vortexField(x,y,z,strength*0.9);
+      vel[i].x += f.vx + (Math.random()-0.5)*0.2;
+      vel[i].y += (gravity*0.02) + f.vy + (Math.random()-0.5)*0.15;
+      vel[i].z += f.vz + (Math.random()-0.5)*0.2;
       vel[i].multiplyScalar(0.986);
-      x+=vel[i].x*dt; y+=vel[i].y*dt; z+=vel[i].z*dt;
-      if(y>0 && Math.random()<0.028) state[i]='rise';
+      x += vel[i].x*dt; y += vel[i].y*dt; z += vel[i].z*dt;
 
-    }else if(state[i]==='rise'){            // bị cuốn lên
-      const f=vortexField(x,y,z,strength*1.35);
-      vel[i].x+=f.vx; vel[i].y+=f.vy+0.65; vel[i].z+=f.vz;
-      vel[i].multiplyScalar(0.986);
-      x+=vel[i].x*dt*1.45; y+=vel[i].y*dt*1.45; z+=vel[i].z*dt*1.45;
-
-      if(y>HEART_Y-6){                      // vào vùng tim
-        state[i]='bound';
-        target[i]=(Math.random()*heartTargets.length)|0;
-        colors[i*3]=pink.r; colors[i*3+1]=pink.g; colors[i*3+2]=pink.b; // sang hồng
-        boundAge[i]=0;
-        boundHold[i]=3.6 + Math.random()*1.2;  // giữ lâu giống gif
-      }
-
-    }else{                                   // bám hình trái tim
-      boundAge[i]+=dt;
-      const t=heartTargets[target[i]], k=4.3, damp=0.90;
-      vel[i].x+=(t.x-x)*k*dt; vel[i].y+=(t.y-y)*k*dt; vel[i].z+=(t.z-z)*k*dt;
-
-      // nhiễu rất nhẹ để “sống” nhưng không phá hình
-      const f=vortexField(x,y,z,strength*0.15);
-      vel[i].x+=f.vx*0.22; vel[i].y+=f.vy*0.10; vel[i].z+=f.vz*0.22;
-
-      vel[i].multiplyScalar(damp);
-      x+=vel[i].x*dt; y+=vel[i].y*dt; z+=vel[i].z*dt;
-
-      // thỉnh thoảng cho rơi để vòng lặp mượt (sau khi đã giữ đủ)
-      if(boundAge[i]>boundHold[i] && phase>0.85 && Math.random()<0.012){
-        state[i]='float'; target[i]=-1;
-        const c=blue; colors[i*3]=c.r; colors[i*3+1]=c.g; colors[i*3+2]=c.b;
+      // tái sinh nếu rơi khỏi khung
+      if(y<floorY-20 || Math.abs(x)>230 || Math.abs(z)>230){
         x=rnd(-radiusX,radiusX); y=rnd(floorY,bottomY); z=rnd(-radiusZ,radiusZ);
         vel[i].set(rnd(-5,5),rnd(5,15),rnd(-5,5));
       }
-    }
 
-    // nếu bay khỏi khung → tái sinh dưới
-    if(y<floorY-20 || Math.abs(x)>230 || Math.abs(z)>230){
-      state[i]='float'; target[i]=-1;
-      const c=blue; colors[i*3]=c.r; colors[i*3+1]=c.g; colors[i*3+2]=c.b;
-      x=rnd(-radiusX,radiusX); y=rnd(floorY,bottomY); z=rnd(-radiusZ,radiusZ);
-      vel[i].set(rnd(-5,5),rnd(5,15),rnd(-5,5));
+    } else { // 'bound' – tim luôn hiện sẵn, chỉ rung theo gió
+      const tgt = heartTargets[target[i]];
+      // lò xo kéo mạnh về vị trí tim (giữ hình)
+      const k = 5.0, damp = 0.90;
+      vel[i].x += (tgt.x - x)*k*dt;
+      vel[i].y += (tgt.y - y)*k*dt;
+      vel[i].z += (tgt.z - z)*k*dt;
+
+      // gió: dùng trường xoáy + nhiễu sin nhỏ theo seed riêng
+      const f = vortexField(x,y,z,strength*0.10*wind);
+      const n = (n1,j)=>Math.sin(tSec*1.7 + jitterSeed[i]*3.1 + j)*0.25*wind;
+      vel[i].x += f.vx*0.6 + n(0,0);
+      vel[i].y += f.vy*0.3 + n(0,1)*0.5;
+      vel[i].z += f.vz*0.6 + n(0,2);
+
+      vel[i].multiplyScalar(damp);
+      x += vel[i].x*dt; y += vel[i].y*dt; z += vel[i].z*dt;
     }
 
     positions[i*3]=x; positions[i*3+1]=y; positions[i*3+2]=z;
   }
 
   geo.attributes.position.needsUpdate=true;
-  geo.attributes.color.needsUpdate=true;
   renderer.render(scene,camera);
 }
 requestAnimationFrame(animate);
