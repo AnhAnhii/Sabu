@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Heart Particles</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #000;
+      color: #ddd;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    }
+    .wrap {
+      display: grid;
+      place-items: center;
+      height: 100%;
+      position: relative;
+      overflow: hidden;
+    }
+    canvas { display: block; }
+    .label {
+      position: absolute;
+      bottom: 14px;
+      right: 16px;
+      font-size: 12px;
+      opacity: 0.7;
+      user-select: none;
+    }
+    .controls {
+      position: absolute;
+      top: 14px;
+      left: 16px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 8px 10px;
+      border-radius: 8px;
+      backdrop-filter: blur(6px);
+    }
+    .controls label { font-size: 12px; opacity: .85; }
+    input[type="range"] { width: 160px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <canvas id="c"></canvas>
+
+    <div class="controls">
+      <label>Speed</label>
+      <input id="speed" type="range" min="0.5" max="2.0" step="0.05" value="1.0" />
+      <label>Size</label>
+      <input id="size" type="range" min="1" max="4" step="1" value="2" />
+    </div>
+
+    <div class="label">❤ Heart Particles – JS port of Tkinter version</div>
+  </div>
+
+  <script>
+  (() => {
+    // ===== Config (giữ tương đương Python) =====
+    const CANVAS_WIDTH = 640;
+    const CANVAS_HEIGHT = 480;
+    const IMAGE_ENLARGE = 11;          // tỉ lệ phóng
+    const HEART_COLOR = "#ff2121";
+    const BG = "#000";
+    const CENTER_X = CANVAS_WIDTH / 2;
+    const CENTER_Y = CANVAS_HEIGHT / 2;
+
+    // Tham số "ma thuật" từ bản Python
+    const SHRINK_RATIO_STRONG = 11.6;   // cho halo
+    const DIST_EXPONENT = 0.520;        // lực theo khoảng cách
+    const FRAME_COUNT = 20;             // số khung tuần hoàn (giống Python)
+
+    // ===== Helpers =====
+    const rand = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+    const choice = arr => arr[Math.floor(Math.random() * arr.length)];
+
+    // Hàm trái tim tham số
+    function heartFunction(t, ratio = IMAGE_ENLARGE) {
+      let x = 16 * Math.pow(Math.sin(t), 3);
+      let y = -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t));
+      x *= ratio; y *= ratio;
+      x += CENTER_X; y += CENTER_Y;
+      return [x, y];
+    }
+
+    // Kéo điểm vào trong một chút (khuếch tán)
+    function scatterInside(x, y, beta = 0.15) {
+      const ratioX = beta * Math.log(Math.random()); // < 0
+      const ratioY = beta * Math.log(Math.random());
+      const dx = ratioX * (x - CENTER_X);
+      const dy = ratioY * (y - CENTER_Y);
+      return [x - dx, y - dy];
+    }
+
+    // Co điểm về tâm theo lực
+    function shrinkPoint(x, y, ratio) {
+      const dx = x - CENTER_X, dy = y - CENTER_Y;
+      const dist2 = dx*dx + dy*dy;
+      const force = -1 / Math.pow(dist2, 0.6); // như Python (0.6)
+      return [x - ratio * force * dx, y - ratio * force * dy];
+    }
+
+    // Đường cong tuần hoàn dùng cho nhịp đập
+    function curve(p) {
+      return 2 * (2 + Math.sin(4 * p)) / (2 * Math.PI);
+    }
+
+    // Dịch chuyển + nhiễu nhẹ (giống calc_position)
+    function calcPosition(x, y, ratio) {
+      const dx = x - CENTER_X, dy = y - CENTER_Y;
+      const force = 1 / Math.pow(dx*dx + dy*dy, DIST_EXPONENT);
+      const jitX = rand(-1, 1), jitY = rand(-1, 1);
+      return [
+        x - (ratio * force * dx + jitX),
+        y - (ratio * force * dy + jitY)
+      ];
+    }
+
+    // ===== Dữ liệu nền (tĩnh) =====
+    const pointsBase = new Set();     // set các cặp "x|y" để tránh trùng nhiều
+    const edgeDiff = new Set();
+    const centerDiff = new Set();
+
+    function key(x, y) { return (x|0) + '|' + (y|0); }
+
+    function build(number = 2000) {
+      // Điểm trên đường trái tim
+      for (let i = 0; i < number; i++) {
+        const t = Math.random() * 2 * Math.PI;
+        let [x, y] = heartFunction(t);
+        pointsBase.add(key(x, y));
+      }
+      // Viền khuếch tán
+      for (const k of pointsBase) {
+        const [x0, y0] = k.split('|').map(Number);
+        for (let i = 0; i < 3; i++) {
+          let [x, y] = scatterInside(x0, y0, 0.05);
+          edgeDiff.add(key(x, y));
+        }
+      }
+      // Trung tâm khuếch tán
+      const listBase = Array.from(pointsBase, k => k.split('|').map(Number));
+      for (let i = 0; i < 4000; i++) {
+        let [x, y] = choice(listBase);
+        [x, y] = scatterInside(x, y, 0.17);
+        centerDiff.add(key(x, y));
+      }
+    }
+    build();
+
+    // ===== Canvas & DPI scaling =====
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    function resize() {
+      const ratio = Math.min(window.innerWidth / CANVAS_WIDTH, window.innerHeight / CANVAS_HEIGHT);
+      const cssW = Math.round(CANVAS_WIDTH * ratio);
+      const cssH = Math.round(CANVAS_HEIGHT * ratio);
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+      canvas.style.width = cssW + 'px';
+      canvas.style.height = cssH + 'px';
+      canvas.width = Math.round(cssW * dpr);
+      canvas.height = Math.round(cssH * dpr);
+      ctx.setTransform(canvas.width / CANVAS_WIDTH, 0, 0, canvas.height / CANVAS_HEIGHT, 0, 0);
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // ===== Tạo frame động (gần giống Python: Heart.calc) =====
+    function makeFrame(frameIndex) {
+      const p = (frameIndex / 10) * Math.PI;
+      const ratio = 10 * curve(p);
+
+      const haloRadius = Math.floor(4 + 6 * (1 + curve(p)));
+      const haloNumber = Math.floor(3000 + 4000 * Math.abs(curve(p)));
+
+      const all = [];
+
+      // Halo
+      const haloSet = new Set();
+      for (let i = 0; i < haloNumber; i++) {
+        const t = Math.random() * 2 * Math.PI;
+        let [x, y] = heartFunction(t, SHRINK_RATIO_STRONG);
+        [x, y] = shrinkPoint(x, y, haloRadius);
+        x = Math.floor(x); y = Math.floor(y);
+        const k = key(x, y);
+        if (!haloSet.has(k)) {
+          haloSet.add(k);
+          x += rand(-14, 14); y += rand(-14, 14);
+          const size = choice([1, 2, 2]); // thiên về 2
+          all.push([x, y, size]);
+        }
+      }
+
+      // Base points
+      for (const k of pointsBase) {
+        let [x, y] = k.split('|').map(Number);
+        [x, y] = calcPosition(x, y, ratio);
+        const size = rand(1, 3);
+        all.push([x, y, size]);
+      }
+
+      // Edge diffusion
+      for (const k of edgeDiff) {
+        let [x, y] = k.split('|').map(Number);
+        [x, y] = calcPosition(x, y, ratio);
+        const size = rand(1, 2);
+        all.push([x, y, size]);
+      }
+
+      // Center diffusion
+      for (const k of centerDiff) {
+        let [x, y] = k.split('|').map(Number);
+        [x, y] = calcPosition(x, y, ratio);
+        const size = rand(1, 2);
+        all.push([x, y, size]);
+      }
+
+      return all;
+    }
+
+    // Precompute một vòng FRAME_COUNT để giống bản gốc
+    const frames = Array.from({ length: FRAME_COUNT }, (_, i) => makeFrame(i));
+
+    // ===== Render loop =====
+    const speedCtrl = document.getElementById('speed');
+    const sizeCtrl = document.getElementById('size');
+    let frame = 0;
+    let lastTime = 0;
+
+    function render(t) {
+      // nhịp tương đương ~6–7 FPS như Tkinter (160ms), nhưng có chỉnh tốc độ
+      const baseInterval = 160; // ms
+      const speed = parseFloat(speedCtrl.value);
+      if (t - lastTime >= baseInterval / speed) {
+        lastTime = t;
+        ctx.fillStyle = BG;
+        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+        const pts = frames[frame % FRAME_COUNT];
+        const extra = parseInt(sizeCtrl.value, 10) - 2; // tăng size tổng thể
+        ctx.fillStyle = HEART_COLOR;
+
+        for (let i = 0; i < pts.length; i++) {
+          const [x, y, s] = pts[i];
+          const size = s + extra;
+          // vẽ “pixel” vuông
+          ctx.fillRect(x, y, size, size);
+        }
+        frame++;
+      }
+      requestAnimationFrame(render);
+    }
+    requestAnimationFrame(render);
+  })();
+  </script>
+</body>
+</html>
